@@ -351,8 +351,27 @@ pub fn main() !void {
 
     switch (listen) {
         .stdio => {
-            for (run.listen_args_list.items) |aoe4moment| {
-                std.log.info("{s}", .{std.mem.join(arena, " ", aoe4moment) catch unreachable});
+            // var children = std.ArrayList(std.ChildProcess).init(arena);
+
+            // for (run.listen_args_list.items) |arg| {
+            //     var child = std.ChildProcess.init(arg, arena);
+
+            //     child.stdin_behavior = .Pipe;
+            //     child.stdout_behavior = .Pipe;
+
+            //     child.spawn() catch @panic("OOM");
+            //     children.append(child) catch @panic("OOM");
+            // }
+
+            var bs = try std.zig.BuildServer.init(.{
+                .gpa = std.heap.page_allocator,
+                .in = std.io.getStdIn(),
+                .out = std.io.getStdOut(),
+                .zig_version = builtin.zig_version_string,
+            });
+
+            while (true) {
+                std.log.info("{any}", .{bs.receiveMessage() catch @panic("OOM")});
             }
         },
         .ip4 => @panic("IPv4 listens not supported"),
