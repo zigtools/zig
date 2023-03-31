@@ -1229,16 +1229,9 @@ fn constructDepString(
     }
 }
 
-fn make(step: *Step, prog_node: *std.Progress.Node) !void {
+pub fn populateArguments(step: *Step, zig_args: *std.ArrayList([]const u8)) !void {
     const b = step.owner;
     const self = @fieldParentPtr(CompileStep, "step", step);
-
-    if (self.root_src == null and self.link_objects.items.len == 0) {
-        return step.fail("the linker needs one or more objects to link", .{});
-    }
-
-    var zig_args = ArrayList([]const u8).init(b.allocator);
-    defer zig_args.deinit();
 
     try zig_args.append(b.zig_exe);
 
@@ -1254,8 +1247,8 @@ fn make(step: *Step, prog_node: *std.Progress.Node) !void {
         try zig_args.append(try std.fmt.allocPrint(b.allocator, "-freference-trace={d}", .{some}));
     }
 
-    try addFlag(&zig_args, "LLVM", self.use_llvm);
-    try addFlag(&zig_args, "LLD", self.use_lld);
+    try addFlag(zig_args, "LLVM", self.use_llvm);
+    try addFlag(zig_args, "LLD", self.use_lld);
 
     if (self.target.ofmt) |ofmt| {
         try zig_args.append(try std.fmt.allocPrint(b.allocator, "-ofmt={s}", .{@tagName(ofmt)}));
@@ -1457,8 +1450,8 @@ fn make(step: *Step, prog_node: *std.Progress.Node) !void {
 
     if (self.emit_h) try zig_args.append("-femit-h");
 
-    try addFlag(&zig_args, "strip", self.strip);
-    try addFlag(&zig_args, "unwind-tables", self.unwind_tables);
+    try addFlag(zig_args, "strip", self.strip);
+    try addFlag(zig_args, "unwind-tables", self.unwind_tables);
 
     switch (self.compress_debug_sections) {
         .none => {},
@@ -1569,12 +1562,12 @@ fn make(step: *Step, prog_node: *std.Progress.Node) !void {
         try zig_args.append("-dead_strip_dylibs");
     }
 
-    try addFlag(&zig_args, "compiler-rt", self.bundle_compiler_rt);
-    try addFlag(&zig_args, "single-threaded", self.single_threaded);
+    try addFlag(zig_args, "compiler-rt", self.bundle_compiler_rt);
+    try addFlag(zig_args, "single-threaded", self.single_threaded);
     if (self.disable_stack_probing) {
         try zig_args.append("-fno-stack-check");
     }
-    try addFlag(&zig_args, "stack-protector", self.stack_protector);
+    try addFlag(zig_args, "stack-protector", self.stack_protector);
     if (self.red_zone) |red_zone| {
         if (red_zone) {
             try zig_args.append("-mred-zone");
@@ -1582,8 +1575,8 @@ fn make(step: *Step, prog_node: *std.Progress.Node) !void {
             try zig_args.append("-mno-red-zone");
         }
     }
-    try addFlag(&zig_args, "omit-frame-pointer", self.omit_frame_pointer);
-    try addFlag(&zig_args, "dll-export-fns", self.dll_export_fns);
+    try addFlag(zig_args, "omit-frame-pointer", self.omit_frame_pointer);
+    try addFlag(zig_args, "dll-export-fns", self.dll_export_fns);
 
     if (self.disable_sanitize_c) {
         try zig_args.append("-fno-sanitize-c");
@@ -1665,7 +1658,7 @@ fn make(step: *Step, prog_node: *std.Progress.Node) !void {
         }
     }
 
-    try self.appendModuleArgs(&zig_args);
+    try self.appendModuleArgs(zig_args);
 
     for (self.include_dirs.items) |include_dir| {
         switch (include_dir) {
@@ -1816,9 +1809,9 @@ fn make(step: *Step, prog_node: *std.Progress.Node) !void {
         }
     }
 
-    try addFlag(&zig_args, "valgrind", self.valgrind_support);
-    try addFlag(&zig_args, "each-lib-rpath", self.each_lib_rpath);
-    try addFlag(&zig_args, "build-id", self.build_id);
+    try addFlag(zig_args, "valgrind", self.valgrind_support);
+    try addFlag(zig_args, "each-lib-rpath", self.each_lib_rpath);
+    try addFlag(zig_args, "build-id", self.build_id);
 
     if (self.zig_lib_dir) |dir| {
         try zig_args.append("--zig-lib-dir");
@@ -1833,9 +1826,9 @@ fn make(step: *Step, prog_node: *std.Progress.Node) !void {
         try zig_args.append(b.pathFromRoot(dir));
     }
 
-    try addFlag(&zig_args, "PIC", self.force_pic);
-    try addFlag(&zig_args, "PIE", self.pie);
-    try addFlag(&zig_args, "lto", self.want_lto);
+    try addFlag(zig_args, "PIC", self.force_pic);
+    try addFlag(zig_args, "PIE", self.pie);
+    try addFlag(zig_args, "lto", self.want_lto);
 
     if (self.subsystem) |subsystem| {
         try zig_args.append("--subsystem");
@@ -1853,6 +1846,20 @@ fn make(step: *Step, prog_node: *std.Progress.Node) !void {
 
     try zig_args.append("--enable-cache");
     try zig_args.append("--listen=-");
+}
+
+fn make(step: *Step, prog_node: *std.Progress.Node) !void {
+    const b = step.owner;
+    const self = @fieldParentPtr(CompileStep, "step", step);
+
+    if (self.root_src == null and self.link_objects.items.len == 0) {
+        return step.fail("the linker needs one or more objects to link", .{});
+    }
+
+    var zig_args = ArrayList([]const u8).init(b.allocator);
+    defer zig_args.deinit();
+
+    try populateArguments(step, &zig_args);
 
     // Windows has an argument length limit of 32,766 characters, macOS 262,144 and Linux
     // 2,097,152. If our args exceed 30 KiB, we instead write them to a "response file" and

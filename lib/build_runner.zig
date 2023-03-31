@@ -9,8 +9,15 @@ const process = std.process;
 const ArrayList = std.ArrayList;
 const File = std.fs.File;
 const Step = std.Build.Step;
+const net = std.net;
 
 pub const dependencies = @import("@dependencies");
+
+const Listen = union(enum) {
+    none,
+    ip4: net.Ip4Address,
+    stdio,
+};
 
 pub fn main() !void {
     // Here we use an ArenaAllocator backed by a DirectAllocator because a build is a short-lived,
@@ -62,6 +69,8 @@ pub fn main() !void {
         .path = global_cache_root,
         .handle = try std.fs.cwd().makeOpenPath(global_cache_root, .{}),
     };
+
+    var listen: Listen = .none;
 
     var cache: std.Build.Cache = .{
         .gpa = arena,
@@ -184,6 +193,17 @@ pub fn main() !void {
                     std.debug.print("Expected argument after {s}\n\n", .{arg});
                     usageAndErr(builder, false, stderr_stream);
                 };
+            } else if (mem.eql(u8, arg, "--listen=-")) {
+                listen = .stdio;
+            } else if (mem.eql(u8, arg, "--listen")) {
+                const next_arg = nextArg(args, &arg_idx) orelse {
+                    std.debug.print("Expected argument after {s}\n\n", .{arg});
+                    usageAndErr(builder, false, stderr_stream);
+                };
+
+                if (std.mem.eql(u8, next_arg, "-")) {
+                    listen = .stdio;
+                } else @panic("Not implemented!");
             } else if (mem.eql(u8, arg, "--debug-log")) {
                 const next_arg = nextArg(args, &arg_idx) orelse {
                     std.debug.print("Expected argument after {s}\n\n", .{arg});
@@ -306,6 +326,10 @@ pub fn main() !void {
         .enable_summary = enable_summary,
         .ttyconf = ttyconf,
         .stderr = stderr,
+
+        .listen = listen,
+        .listen_mutex = .{},
+        .listen_args_list = std.ArrayList([]const []const u8).init(arena),
     };
 
     if (run.max_rss == 0) {
@@ -324,6 +348,16 @@ pub fn main() !void {
         error.UncleanExit => process.exit(1),
         else => return err,
     };
+
+    switch (listen) {
+        .stdio => {
+            for (run.listen_args_list.items) |aoe4moment| {
+                std.log.info("{s}", .{std.mem.join(arena, " ", aoe4moment) catch unreachable});
+            }
+        },
+        .ip4 => @panic("IPv4 listens not supported"),
+        .none => {},
+    }
 }
 
 const Run = struct {
@@ -336,6 +370,10 @@ const Run = struct {
     enable_summary: ?bool,
     ttyconf: std.debug.TTY.Config,
     stderr: std.fs.File,
+
+    listen: Listen,
+    listen_mutex: std.Thread.Mutex,
+    listen_args_list: std.ArrayList([]const []const u8),
 };
 
 fn runStepNames(
@@ -470,7 +508,7 @@ fn runStepNames(
 
     // A proper command line application defaults to silently succeeding.
     // The user may request verbose mode if they have a different preference.
-    if (failure_count == 0 and run.enable_summary != true) return cleanExit();
+    if (failure_count == 0 and run.enable_summary != true) return;
 
     const ttyconf = run.ttyconf;
     const stderr = run.stderr;
@@ -510,7 +548,7 @@ fn runStepNames(
         }
     }
 
-    if (failure_count == 0) return cleanExit();
+    if (failure_count == 0) return;
 
     // Finally, render compile errors at the bottom of the terminal.
     // We use a separate compile_error_steps array list because step_stack is destructively
@@ -807,6 +845,22 @@ fn workerMakeOneStep(
     sub_prog_node.activate();
     defer sub_prog_node.end();
 
+    if (run.listen != .none) b: {
+        const compile_step = s.cast(std.Build.CompileStep) orelse break :b;
+        _ = compile_step;
+
+        var zig_args = std.ArrayList([]const u8).init(b.allocator);
+        std.Build.CompileStep.populateArguments(s, &zig_args) catch |err| switch (err) {
+            error.OutOfMemory => @panic("OOM"),
+            else => @panic(@errorName(err)),
+        };
+
+        run.listen_mutex.lock();
+        defer run.listen_mutex.unlock();
+
+        run.listen_args_list.append(zig_args.toOwnedSlice() catch @panic("OOM")) catch @panic("OOM");
+    }
+
     const make_result = s.make(&sub_prog_node);
 
     // No matter the result, we want to display error/warning messages.
@@ -989,6 +1043,7 @@ fn usage(builder: *std.Build, already_ran_build: bool, out_stream: anytype) !voi
         \\  --global-cache-dir [path]    Override path to global Zig cache directory
         \\  --zig-lib-dir [arg]          Override path to Zig lib directory
         \\  --build-runner [file]        Override path to build runner
+        \\  --listen [-|addr:port]       Enable a long-running build server
         \\  --debug-log [scope]          Enable debugging the compiler
         \\  --debug-pkg-config           Fail if unknown pkg-config flags encountered
         \\  --verbose-link               Enable compiler debug output for linking
