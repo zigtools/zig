@@ -3859,33 +3859,82 @@ fn semaDecl(mod: *Module, decl_index: Decl.Index) !bool {
         try sema.analyzeExport(&block_scope, export_src, .{ .name = decl.name }, decl_index);
     }
 
-    if (mod.comp.update_flags.want_decls and type_changed) {
-        mod.comp.mutex.lock();
-        defer mod.comp.mutex.unlock();
+    if (mod.comp.update_flags.want_decls) {
+        try mod.transmitInternPool();
+    }
 
-        switch (decl.ty.zigTypeTag(mod)) {
-            .Int => {
-                const t = mod.intern_pool.indexToKey(decl.ty.ip_index).int_type;
+    return type_changed;
+}
 
+fn transmitInternPool(mod: *Module) !void {
+    for (mod.comp.last_transmitted_string_bytes_index..mod.intern_pool.string_bytes.items.len) |i| {
+        _ = i;
+    }
+    mod.comp.last_transmitted_string_bytes_index = @intCast(mod.intern_pool.string_bytes.items.len);
+
+    for (mod.comp.last_transmitted_ip_index..mod.intern_pool.items.len) |i| {
+        const ip_index: InternPool.Index = @enumFromInt(i);
+
+        switch (mod.intern_pool.indexToKey(ip_index)) {
+            .int_type => |int| {
                 try mod.comp.compile_server.?.serveMessage(.{
-                    .tag = .decl,
+                    .tag = .sync_tv,
                     .bytes_len = @sizeOf(protocol.type.TypeHeader) + @sizeOf(protocol.type.Int),
                 }, &.{
                     &std.mem.toBytes(protocol.type.TypeHeader{
-                        .index = @enumFromInt(@intFromEnum(decl.ty.ip_index)),
-                        .kind = decl.ty.zigTypeTag(mod),
+                        .index = @enumFromInt(@intFromEnum(ip_index)),
+                        .kind = .Int,
                     }),
                     &std.mem.toBytes(protocol.type.Int{
-                        .signedness = t.signedness,
-                        .bits = t.bits,
+                        .signedness = int.signedness,
+                        .bits = int.bits,
+                    }),
+                });
+            },
+            .opt_type => |child| {
+                try mod.comp.compile_server.?.serveMessage(.{
+                    .tag = .sync_tv,
+                    .bytes_len = @sizeOf(protocol.type.TypeHeader) + @sizeOf(protocol.type.Optional),
+                }, &.{
+                    &std.mem.toBytes(protocol.type.TypeHeader{
+                        .index = @enumFromInt(@intFromEnum(ip_index)),
+                        .kind = .Optional,
+                    }),
+                    &std.mem.toBytes(protocol.type.Optional{
+                        .child = @enumFromInt(@intFromEnum(child)),
+                    }),
+                });
+            },
+            .struct_type => |@"struct"| {
+                try mod.comp.compile_server.?.serveMessage(.{
+                    .tag = .sync_tv,
+                    .bytes_len = @sizeOf(protocol.type.TypeHeader) +
+                        @sizeOf(protocol.type.Struct) +
+                        @"struct".field_types.len * @sizeOf(protocol.type.StructField) +
+                        @sizeOf(u32) * @"struct".field_names.len,
+                }, &.{
+                    &std.mem.toBytes(protocol.type.TypeHeader{
+                        .index = @enumFromInt(@intFromEnum(ip_index)),
+                        .kind = .Struct,
+                    }),
+                    &std.mem.toBytes(protocol.type.Struct{
+                        .flags = .{
+                            .layout = @"struct".layout,
+                            .is_tuple = @"struct".isTuple(&mod.intern_pool),
+                        },
+                        .backing_integer = if (@"struct".layout == .Packed)
+                            @enumFromInt(@intFromEnum(@"struct".backingIntType(&mod.intern_pool).*))
+                        else
+                            .none,
+                        .fields_len = @"struct".field_types.len,
+                        .decls_len = 0,
                     }),
                 });
             },
             else => {},
         }
     }
-
-    return type_changed;
+    mod.comp.last_transmitted_ip_index = @intCast(mod.intern_pool.items.len);
 }
 
 pub const ImportFileResult = struct {

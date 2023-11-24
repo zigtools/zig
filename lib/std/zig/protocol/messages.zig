@@ -71,6 +71,10 @@ pub const ServerToClient = struct {
         test_results,
         /// Body is a Decl
         decl,
+        /// Body is a bytes
+        sync_string_bytes,
+        /// Body is a TypeHeader
+        sync_tv,
 
         _,
     };

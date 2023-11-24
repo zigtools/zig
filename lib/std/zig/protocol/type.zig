@@ -103,31 +103,37 @@ pub const Array = extern struct {
     // sentinel: ?*const anyopaque,
 };
 
-pub const ContainerLayout = enum(u2) {
-    auto,
-    @"extern",
-    @"packed",
-};
-
+/// Trailing data:
+///   - field_names:         [fields_len]String,
+///   - field_types:         [fields_len]TypeIndex,
+///   - field_is_comptime:   [@divCeil(fields_len, 8)]u8, (packed booleans)
+///   - field_alignment:     [fields_len]u16,
 pub const Struct = extern struct {
-    layout: ContainerLayout,
-    /// Only valid if layout is .Packed
-    backing_integer: OptionalTypeIndex = null,
-    // fields: []const StructField,
-    // decls: []const Declaration,
-    is_tuple: bool,
+    flags: packed struct(u8) {
+        layout: std.builtin.Type.ContainerLayout,
+        is_tuple: bool,
+
+        padding: u5 = undefined,
+    },
+
+    backing_integer: OptionalTypeIndex,
 
     fields_len: u32,
     decls_len: u32,
 };
 
-pub const StructField = extern struct {
-    name: String,
-    type: TypeIndex,
-    // default_value: ?*const anyopaque,
-    is_comptime: bool,
-    alignment: u16,
-};
+// name: String,
+// type: TypeIndex,
+// is_comptime: bool,
+// alignment: u16,
+
+// pub const StructField = extern struct {
+//     name: String,
+//     type: TypeIndex,
+//     // default_value: ?*const anyopaque,
+//     is_comptime: bool,
+//     alignment: u16,
+// };
 
 pub const Optional = extern struct {
     child: TypeIndex,
@@ -178,7 +184,7 @@ pub const UnionField = extern struct {
 /// This data structure is used by the Zig language code generation and
 /// therefore must be kept in sync with the compiler implementation.
 pub const Union = extern struct {
-    layout: ContainerLayout,
+    // layout: ContainerLayout,
     tag_type: OptionalTypeIndex,
     fields: []const UnionField,
     decls: []const Declaration,

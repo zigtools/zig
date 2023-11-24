@@ -198,6 +198,8 @@ astgen_wait_group: WaitGroup = .{},
 
 compile_server: ?*protocol.Server = null,
 update_flags: protocol.ClientToServer.UpdateFlags = .{},
+last_transmitted_string_bytes_index: u32 = 0,
+last_transmitted_ip_index: u32 = 0,
 
 pub const default_stack_protector_buffer_size = 4;
 pub const SemaError = Module.SemaError;
