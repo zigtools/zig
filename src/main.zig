@@ -28,7 +28,7 @@ const crash_report = @import("crash_report.zig");
 const Module = @import("Module.zig");
 const AstGen = @import("AstGen.zig");
 const mingw = @import("mingw.zig");
-const Server = std.zig.Server;
+const protocol = std.zig.protocol;
 
 pub const std_options = struct {
     pub const wasiCwd = wasi_cwd;
@@ -3767,7 +3767,7 @@ fn serve(
 ) !void {
     const gpa = comp.gpa;
 
-    var server = try Server.init(.{
+    var server = try protocol.Server.init(.{
         .gpa = gpa,
         .in = in,
         .out = out,
@@ -3794,6 +3794,15 @@ fn serve(
     const main_progress_node = &progress.root;
     main_progress_node.context = &progress;
 
+    // TODO: Send and receive UpdateFlags
+    const flags = protocol.ClientToServer.UpdateFlags{
+        .want_error_bundle = true,
+        .want_decls = true,
+        .want_emit_bin_path = true,
+    };
+    comp.compile_server = &server;
+    comp.update_flags = flags;
+
     while (true) {
         const hdr = try server.receiveMessage();
 
@@ -3802,6 +3811,8 @@ fn serve(
             .update => {
                 assert(main_progress_node.recently_updated_child == null);
                 tracy.frameMark();
+
+                std.log.err("BRUH 1", .{});
 
                 if (arg_mode == .translate_c) {
                     var arena_instance = std.heap.ArenaAllocator.init(gpa);
@@ -3841,7 +3852,7 @@ fn serve(
                 }
 
                 try comp.makeBinFileExecutable();
-                try serveUpdateResults(&server, comp);
+                try serveUpdateResults(&server, comp, flags);
             },
             .run => {
                 if (child_pid != null) {
@@ -3868,14 +3879,14 @@ fn serve(
                 assert(main_progress_node.recently_updated_child == null);
                 if (child_pid) |pid| {
                     try comp.hotCodeSwap(main_progress_node, pid);
-                    try serveUpdateResults(&server, comp);
+                    try serveUpdateResults(&server, comp, flags);
                 } else {
                     if (comp.bin_file.options.output_mode == .Exe) {
                         try comp.makeBinFileWritable();
                     }
                     try comp.update(main_progress_node);
                     try comp.makeBinFileExecutable();
-                    try serveUpdateResults(&server, comp);
+                    try serveUpdateResults(&server, comp, flags);
 
                     child_pid = try runOrTestHotSwap(
                         comp,
@@ -3895,7 +3906,7 @@ fn serve(
     }
 }
 
-fn progressThread(progress: *std.Progress, server: *const Server, reset: *std.Thread.ResetEvent) void {
+fn progressThread(progress: *std.Progress, server: *const protocol.Server, reset: *std.Thread.ResetEvent) void {
     while (true) {
         if (reset.timedWait(500 * std.time.ns_per_ms)) |_| {
             // The Compilation update has completed.
@@ -3952,32 +3963,42 @@ fn progressThread(progress: *std.Progress, server: *const Server, reset: *std.Th
     }
 }
 
-fn serveUpdateResults(s: *Server, comp: *Compilation) !void {
+fn serveUpdateResults(
+    s: *protocol.Server,
+    comp: *Compilation,
+    flags: protocol.ClientToServer.UpdateFlags,
+) !void {
+    std.log.err("BRUH 2", .{});
+
     const gpa = comp.gpa;
-    var error_bundle = try comp.getAllErrorsAlloc();
-    defer error_bundle.deinit(gpa);
-    if (error_bundle.errorMessageCount() > 0) {
-        try s.serveErrorBundle(error_bundle);
-        return;
+    if (flags.want_error_bundle) {
+        var error_bundle = try comp.getAllErrorsAlloc();
+        defer error_bundle.deinit(gpa);
+        if (error_bundle.errorMessageCount() > 0) {
+            try s.serveErrorBundle(error_bundle);
+        }
     }
-    // This logic is a bit counter-intuitive because the protocol implies that
-    // each emitted artifact could possibly be in a different location, when in
-    // reality, there is only one artifact output directory, and the build
-    // system depends on that fact. So, until the protocol is changed to
-    // reflect this, this logic only needs to ensure that emit_bin_path is
-    // emitted for at least one thing, if there are any artifacts.
-    if (comp.bin_file.options.emit) |emit| {
-        const full_path = try emit.directory.join(gpa, &.{emit.sub_path});
-        defer gpa.free(full_path);
-        try s.serveEmitBinPath(full_path, .{
-            .flags = .{ .cache_hit = comp.last_update_was_cache_hit },
-        });
-    } else if (comp.bin_file.options.docs_emit) |emit| {
-        const full_path = try emit.directory.join(gpa, &.{emit.sub_path});
-        defer gpa.free(full_path);
-        try s.serveEmitBinPath(full_path, .{
-            .flags = .{ .cache_hit = comp.last_update_was_cache_hit },
-        });
+
+    if (flags.want_emit_bin_path and comp.totalErrorCount() == 0) {
+        // This logic is a bit counter-intuitive because the protocol implies that
+        // each emitted artifact could possibly be in a different location, when in
+        // reality, there is only one artifact output directory, and the build
+        // system depends on that fact. So, until the protocol is changed to
+        // reflect this, this logic only needs to ensure that emit_bin_path is
+        // emitted for at least one thing, if there are any artifacts.
+        if (comp.bin_file.options.emit) |emit| {
+            const full_path = try emit.directory.join(gpa, &.{emit.sub_path});
+            defer gpa.free(full_path);
+            try s.serveEmitBinPath(full_path, .{
+                .flags = .{ .cache_hit = comp.last_update_was_cache_hit },
+            });
+        } else if (comp.bin_file.options.docs_emit) |emit| {
+            const full_path = try emit.directory.join(gpa, &.{emit.sub_path});
+            defer gpa.free(full_path);
+            try s.serveEmitBinPath(full_path, .{
+                .flags = .{ .cache_hit = comp.last_update_was_cache_hit },
+            });
+        }
     }
 }
 

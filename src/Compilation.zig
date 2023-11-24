@@ -10,6 +10,7 @@ const Target = std.Target;
 const ThreadPool = std.Thread.Pool;
 const WaitGroup = std.Thread.WaitGroup;
 const ErrorBundle = std.zig.ErrorBundle;
+const protocol = std.zig.protocol;
 
 const Value = @import("value.zig").Value;
 const Type = @import("type.zig").Type;
@@ -194,6 +195,9 @@ emit_llvm_bc: ?EmitLoc,
 
 work_queue_wait_group: WaitGroup = .{},
 astgen_wait_group: WaitGroup = .{},
+
+compile_server: ?*protocol.Server = null,
+update_flags: protocol.ClientToServer.UpdateFlags = .{},
 
 pub const default_stack_protector_buffer_size = 4;
 pub const SemaError = Module.SemaError;

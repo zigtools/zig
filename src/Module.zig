@@ -35,6 +35,7 @@ const clang = @import("clang.zig");
 const InternPool = @import("InternPool.zig");
 const Alignment = InternPool.Alignment;
 const BuiltinFn = @import("BuiltinFn.zig");
+const protocol = std.zig.protocol;
 
 comptime {
     @setEvalBranchQuota(4000);
@@ -3856,6 +3857,32 @@ fn semaDecl(mod: *Module, decl_index: Decl.Index) !bool {
         const export_src: LazySrcLoc = .{ .token_offset = @intFromBool(decl.is_pub) };
         // The scope needs to have the decl in it.
         try sema.analyzeExport(&block_scope, export_src, .{ .name = decl.name }, decl_index);
+    }
+
+    if (mod.comp.update_flags.want_decls and type_changed) {
+        mod.comp.mutex.lock();
+        defer mod.comp.mutex.unlock();
+
+        switch (decl.ty.zigTypeTag(mod)) {
+            .Int => {
+                const t = mod.intern_pool.indexToKey(decl.ty.ip_index).int_type;
+
+                try mod.comp.compile_server.?.serveMessage(.{
+                    .tag = .decl,
+                    .bytes_len = @sizeOf(protocol.type.TypeHeader) + @sizeOf(protocol.type.Int),
+                }, &.{
+                    &std.mem.toBytes(protocol.type.TypeHeader{
+                        .index = @enumFromInt(@intFromEnum(decl.ty.ip_index)),
+                        .kind = decl.ty.zigTypeTag(mod),
+                    }),
+                    &std.mem.toBytes(protocol.type.Int{
+                        .signedness = t.signedness,
+                        .bits = t.bits,
+                    }),
+                });
+            },
+            else => {},
+        }
     }
 
     return type_changed;
