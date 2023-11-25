@@ -3646,6 +3646,7 @@ pub const Object = struct {
                 .un,
                 // memoization, not types
                 .memoized_call,
+                .unique_unresolved_placeholder,
                 => unreachable,
             },
         };
@@ -4304,6 +4305,7 @@ pub const Object = struct {
                     union_ty, vals[0..len]);
             },
             .memoized_call => unreachable,
+            .unique_unresolved_placeholder => unreachable,
         };
     }
 

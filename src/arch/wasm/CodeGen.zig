@@ -3381,7 +3381,7 @@ fn lowerConstant(func: *CodeGen, val: Value, ty: Type) InnerError!WValue {
             };
             return func.lowerConstant(un.val.toValue(), constant_ty);
         },
-        .memoized_call => unreachable,
+        .memoized_call, .unique_unresolved_placeholder => unreachable,
     }
 }
 

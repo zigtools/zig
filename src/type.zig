@@ -431,6 +431,7 @@ pub const Type = struct {
             .un,
             // memoization, not types
             .memoized_call,
+            .unique_unresolved_placeholder,
             => unreachable,
         }
     }
@@ -651,6 +652,7 @@ pub const Type = struct {
                 .un,
                 // memoization, not types
                 .memoized_call,
+                .unique_unresolved_placeholder,
                 => unreachable,
             },
         };
@@ -758,6 +760,7 @@ pub const Type = struct {
             .un,
             // memoization, not types
             .memoized_call,
+            .unique_unresolved_placeholder,
             => unreachable,
         };
     }
@@ -1073,6 +1076,7 @@ pub const Type = struct {
                 .un,
                 // memoization, not types
                 .memoized_call,
+                .unique_unresolved_placeholder,
                 => unreachable,
             },
         }
@@ -1430,6 +1434,7 @@ pub const Type = struct {
                 .un,
                 // memoization, not types
                 .memoized_call,
+                .unique_unresolved_placeholder,
                 => unreachable,
             },
         }
@@ -1652,6 +1657,7 @@ pub const Type = struct {
             .un,
             // memoization, not types
             .memoized_call,
+            .unique_unresolved_placeholder,
             => unreachable,
         }
     }
@@ -2187,6 +2193,7 @@ pub const Type = struct {
                 .un,
                 // memoization, not types
                 .memoized_call,
+                .unique_unresolved_placeholder,
                 => unreachable,
             },
         };
@@ -2530,6 +2537,7 @@ pub const Type = struct {
                 .un,
                 // memoization, not types
                 .memoized_call,
+                .unique_unresolved_placeholder,
                 => unreachable,
             },
         };
@@ -2723,6 +2731,7 @@ pub const Type = struct {
                 .un,
                 // memoization, not types
                 .memoized_call,
+                .unique_unresolved_placeholder,
                 => unreachable,
             },
         };

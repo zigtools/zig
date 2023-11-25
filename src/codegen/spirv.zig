@@ -885,6 +885,7 @@ const DeclGen = struct {
                 return try self.unionInit(ty, active_field, payload);
             },
             .memoized_call => unreachable,
+            .unique_unresolved_placeholder => unreachable,
         }
     }
 

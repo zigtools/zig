@@ -1004,6 +1004,7 @@ pub const DeclGen = struct {
             .inferred_error_set_type,
             // memoization, not values
             .memoized_call,
+            .unique_unresolved_placeholder,
             => unreachable,
 
             .undef => unreachable, // handled above

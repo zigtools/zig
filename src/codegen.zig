@@ -605,6 +605,7 @@ pub fn generateSymbol(
             }
         },
         .memoized_call => unreachable,
+        .unique_unresolved_placeholder => unreachable,
     }
     return .ok;
 }

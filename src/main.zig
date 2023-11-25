@@ -28,7 +28,8 @@ const crash_report = @import("crash_report.zig");
 const Module = @import("Module.zig");
 const AstGen = @import("AstGen.zig");
 const mingw = @import("mingw.zig");
-const Server = std.zig.Server;
+const InternPool = @import("InternPool.zig");
+const protocol = std.zig.protocol;
 
 pub const std_options = struct {
     pub const wasiCwd = wasi_cwd;
@@ -3767,7 +3768,7 @@ fn serve(
 ) !void {
     const gpa = comp.gpa;
 
-    var server = try Server.init(.{
+    var server = try protocol.Server.init(.{
         .gpa = gpa,
         .in = in,
         .out = out,
@@ -3793,6 +3794,15 @@ fn serve(
     };
     const main_progress_node = &progress.root;
     main_progress_node.context = &progress;
+
+    // TODO: Send and receive UpdateFlags
+    const flags = protocol.ClientToServer.UpdateFlags{
+        .want_error_bundle = true,
+        .want_decls = true,
+        .want_emit_bin_path = true,
+    };
+    comp.compile_server = &server;
+    comp.update_flags = flags;
 
     while (true) {
         const hdr = try server.receiveMessage();
@@ -3841,7 +3851,7 @@ fn serve(
                 }
 
                 try comp.makeBinFileExecutable();
-                try serveUpdateResults(&server, comp);
+                try serveUpdateResults(&server, comp, flags);
             },
             .run => {
                 if (child_pid != null) {
@@ -3868,14 +3878,14 @@ fn serve(
                 assert(main_progress_node.recently_updated_child == null);
                 if (child_pid) |pid| {
                     try comp.hotCodeSwap(main_progress_node, pid);
-                    try serveUpdateResults(&server, comp);
+                    try serveUpdateResults(&server, comp, flags);
                 } else {
                     if (comp.bin_file.options.output_mode == .Exe) {
                         try comp.makeBinFileWritable();
                     }
                     try comp.update(main_progress_node);
                     try comp.makeBinFileExecutable();
-                    try serveUpdateResults(&server, comp);
+                    try serveUpdateResults(&server, comp, flags);
 
                     child_pid = try runOrTestHotSwap(
                         comp,
@@ -3895,7 +3905,7 @@ fn serve(
     }
 }
 
-fn progressThread(progress: *std.Progress, server: *const Server, reset: *std.Thread.ResetEvent) void {
+fn progressThread(progress: *std.Progress, server: *const protocol.Server, reset: *std.Thread.ResetEvent) void {
     while (true) {
         if (reset.timedWait(500 * std.time.ns_per_ms)) |_| {
             // The Compilation update has completed.
@@ -3952,33 +3962,88 @@ fn progressThread(progress: *std.Progress, server: *const Server, reset: *std.Th
     }
 }
 
-fn serveUpdateResults(s: *Server, comp: *Compilation) !void {
+fn serveUpdateResults(
+    s: *protocol.Server,
+    comp: *Compilation,
+    flags: protocol.ClientToServer.UpdateFlags,
+) !void {
     const gpa = comp.gpa;
-    var error_bundle = try comp.getAllErrorsAlloc();
-    defer error_bundle.deinit(gpa);
-    if (error_bundle.errorMessageCount() > 0) {
-        try s.serveErrorBundle(error_bundle);
-        return;
+    if (flags.want_error_bundle) {
+        var error_bundle = try comp.getAllErrorsAlloc();
+        defer error_bundle.deinit(gpa);
+        if (error_bundle.errorMessageCount() > 0) {
+            try s.serveErrorBundle(error_bundle);
+        }
     }
-    // This logic is a bit counter-intuitive because the protocol implies that
-    // each emitted artifact could possibly be in a different location, when in
-    // reality, there is only one artifact output directory, and the build
-    // system depends on that fact. So, until the protocol is changed to
-    // reflect this, this logic only needs to ensure that emit_bin_path is
-    // emitted for at least one thing, if there are any artifacts.
-    if (comp.bin_file.options.emit) |emit| {
-        const full_path = try emit.directory.join(gpa, &.{emit.sub_path});
-        defer gpa.free(full_path);
-        try s.serveEmitBinPath(full_path, .{
-            .flags = .{ .cache_hit = comp.last_update_was_cache_hit },
-        });
-    } else if (comp.bin_file.options.docs_emit) |emit| {
-        const full_path = try emit.directory.join(gpa, &.{emit.sub_path});
-        defer gpa.free(full_path);
-        try s.serveEmitBinPath(full_path, .{
-            .flags = .{ .cache_hit = comp.last_update_was_cache_hit },
-        });
+
+    if (flags.want_emit_bin_path and comp.totalErrorCount() == 0) {
+        // This logic is a bit counter-intuitive because the protocol implies that
+        // each emitted artifact could possibly be in a different location, when in
+        // reality, there is only one artifact output directory, and the build
+        // system depends on that fact. So, until the protocol is changed to
+        // reflect this, this logic only needs to ensure that emit_bin_path is
+        // emitted for at least one thing, if there are any artifacts.
+        if (comp.bin_file.options.emit) |emit| {
+            const full_path = try emit.directory.join(gpa, &.{emit.sub_path});
+            defer gpa.free(full_path);
+            try s.serveEmitBinPath(full_path, .{
+                .flags = .{ .cache_hit = comp.last_update_was_cache_hit },
+            });
+        } else if (comp.bin_file.options.docs_emit) |emit| {
+            const full_path = try emit.directory.join(gpa, &.{emit.sub_path});
+            defer gpa.free(full_path);
+            try s.serveEmitBinPath(full_path, .{
+                .flags = .{ .cache_hit = comp.last_update_was_cache_hit },
+            });
+        }
     }
+
+    if (flags.want_decls and comp.totalErrorCount() == 0) {
+        try serveSyncInternPool(s, comp);
+    }
+}
+
+fn serveSyncInternPool(
+    s: *protocol.Server,
+    comp: *Compilation,
+) !void {
+    _ = s;
+    const mod = comp.bin_file.options.module orelse return;
+
+    const ip_slice = mod.intern_pool.items.slice();
+
+    const items_len = mod.intern_pool.items.len - mod.comp.last_transmitted_ip_index;
+    const extra_len = mod.intern_pool.extra.items.len - mod.comp.last_transmitted_extra_index;
+    const limbs_len = mod.intern_pool.limbs.items.len - mod.comp.last_transmitted_limbs_index;
+    const string_bytes_len = mod.intern_pool.string_bytes.items.len - mod.comp.last_transmitted_string_bytes_index;
+
+    try mod.comp.compile_server.?.serveMessage(.{
+        .tag = .sync_intern_pool,
+        .bytes_len = @intCast(
+            @sizeOf(protocol.ServerToClient.SyncInternPool) +
+                items_len * (@sizeOf(InternPool.Tag) + @sizeOf(u32)) +
+                extra_len * @sizeOf(u32) +
+                limbs_len * @sizeOf(u64) +
+                string_bytes_len,
+        ),
+    }, &.{
+        &std.mem.toBytes(protocol.ServerToClient.SyncInternPool{
+            .items_len = @intCast(items_len),
+            .extra_len = @intCast(extra_len),
+            .limbs_len = @intCast(limbs_len),
+            .string_bytes_len = @intCast(string_bytes_len),
+        }),
+        std.mem.sliceAsBytes(ip_slice.items(.tag)[mod.comp.last_transmitted_ip_index..]),
+        std.mem.sliceAsBytes(ip_slice.items(.data)[mod.comp.last_transmitted_ip_index..]),
+        std.mem.sliceAsBytes(mod.intern_pool.extra.items[mod.comp.last_transmitted_extra_index..]),
+        std.mem.sliceAsBytes(mod.intern_pool.limbs.items[mod.comp.last_transmitted_limbs_index..]),
+        mod.intern_pool.string_bytes.items[mod.comp.last_transmitted_string_bytes_index..],
+    });
+
+    mod.comp.last_transmitted_ip_index = @intCast(mod.intern_pool.items.len);
+    mod.comp.last_transmitted_extra_index = @intCast(mod.intern_pool.extra.items.len);
+    mod.comp.last_transmitted_limbs_index = @intCast(mod.intern_pool.limbs.items.len);
+    mod.comp.last_transmitted_string_bytes_index = @intCast(mod.intern_pool.string_bytes.items.len);
 }
 
 const ModuleDepIterator = struct {

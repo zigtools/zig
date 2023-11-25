@@ -35,6 +35,7 @@ const clang = @import("clang.zig");
 const InternPool = @import("InternPool.zig");
 const Alignment = InternPool.Alignment;
 const BuiltinFn = @import("BuiltinFn.zig");
+const protocol = std.zig.protocol;
 
 comptime {
     @setEvalBranchQuota(4000);

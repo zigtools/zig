@@ -445,7 +445,7 @@ pub fn print(
                 } else try writer.writeAll("...");
                 return writer.writeAll(" }");
             },
-            .memoized_call => unreachable,
+            .memoized_call, .unique_unresolved_placeholder => unreachable,
         },
     };
 }

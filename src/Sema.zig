@@ -36848,6 +36848,7 @@ pub fn typeHasOnePossibleValue(sema: *Sema, ty: Type) CompileError!?Value {
             .repeated,
             // memoized value, not types
             .memoized_call,
+            .unique_unresolved_placeholder,
             => unreachable,
 
             .type_array_big,

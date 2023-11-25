@@ -70,7 +70,7 @@ const Module = @import("Module.zig");
 const Zir = @import("Zir.zig");
 const Sema = @import("Sema.zig");
 
-const KeyAdapter = struct {
+pub const KeyAdapter = struct {
     intern_pool: *const InternPool,
 
     pub fn eql(ctx: @This(), a: Key, b_void: void, b_map_index: usize) bool {
@@ -264,6 +264,11 @@ pub const Key = union(enum) {
 
     /// A comptime function call with a memoized result.
     memoized_call: Key.MemoizedCall,
+
+    /// This is used for unresolved builtin types.
+    /// Used to be SimpleValue.@"unreachable", but that
+    /// would make it undecodeable.
+    unique_unresolved_placeholder: u32,
 
     pub const TypeValue = extern struct {
         ty: Index,
@@ -1230,6 +1235,7 @@ pub const Key = union(enum) {
             .empty_enum_value,
             .inferred_error_set_type,
             .un,
+            .unique_unresolved_placeholder,
             => |x| Hash.hash(seed, asBytes(&x)),
 
             .int_type => |x| Hash.hash(seed + @intFromEnum(x.signedness), asBytes(&x.bits)),
@@ -1732,6 +1738,11 @@ pub const Key = union(enum) {
                 return a_info.func == b_info.func and
                     std.mem.eql(Index, a_info.arg_values, b_info.arg_values);
             },
+
+            .unique_unresolved_placeholder => |a_info| {
+                const b_info = b.unique_unresolved_placeholder;
+                return a_info == b_info;
+            },
         }
     }
 
@@ -1784,7 +1795,7 @@ pub const Key = union(enum) {
                 .generic_poison => .generic_poison_type,
             },
 
-            .memoized_call => unreachable,
+            .memoized_call, .unique_unresolved_placeholder => unreachable,
         };
     }
 };
@@ -2274,6 +2285,7 @@ pub const Index = enum(u32) {
             @"trailing.arg_values.len": *@"data.args_len",
             trailing: struct { arg_values: []Index },
         },
+        unique_unresolved_placeholder: struct { data: u32 },
     }) void {
         _ = self;
         const map_fields = @typeInfo(@typeInfo(@TypeOf(tag_to_encoding_map)).Pointer.child).Struct.fields;
@@ -2820,6 +2832,8 @@ pub const Tag = enum(u8) {
     /// data is extra index to `MemoizedCall`
     memoized_call,
 
+    unique_unresolved_placeholder,
+
     const ErrorUnionType = Key.ErrorUnionType;
     const OpaqueType = Key.OpaqueType;
     const TypeValue = Key.TypeValue;
@@ -2908,6 +2922,7 @@ pub const Tag = enum(u8) {
             .aggregate => Aggregate,
             .repeated => Repeated,
             .memoized_call => MemoizedCall,
+            .unique_unresolved_placeholder => unreachable,
         };
     }
 
@@ -4202,6 +4217,10 @@ pub fn indexToKey(ip: *const InternPool, index: Index) Key {
                 .result = extra.data.result,
             } };
         },
+
+        .unique_unresolved_placeholder => {
+            return .{ .unique_unresolved_placeholder = data };
+        },
     };
 }
 
@@ -5319,6 +5338,13 @@ pub fn get(ip: *InternPool, gpa: Allocator, key: Key) Allocator.Error!Index {
                 }),
             });
             ip.extra.appendSliceAssumeCapacity(@ptrCast(memoized_call.arg_values));
+        },
+
+        .unique_unresolved_placeholder => |placeholder| {
+            ip.items.appendAssumeCapacity(.{
+                .tag = .unique_unresolved_placeholder,
+                .data = placeholder,
+            });
         },
     }
     return @enumFromInt(ip.items.len - 1);
@@ -7399,6 +7425,7 @@ fn dumpStatsFallible(ip: *const InternPool, arena: Allocator) anyerror!void {
                 const info = ip.extraData(MemoizedCall, data);
                 break :b @sizeOf(MemoizedCall) + (@sizeOf(Index) * info.args_len);
             },
+            .unique_unresolved_placeholder => 0,
         });
     }
     const SortContext = struct {
@@ -7502,6 +7529,7 @@ fn dumpAllFallible(ip: *const InternPool) anyerror!void {
             .func_coerced,
             .union_value,
             .memoized_call,
+            .unique_unresolved_placeholder,
             => try w.print("{d}", .{data}),
 
             .opt_null,
@@ -7931,6 +7959,7 @@ pub fn typeOf(ip: *const InternPool, index: Index) Index {
             .float_comptime_float => .comptime_float_type,
 
             .memoized_call => unreachable,
+            .unique_unresolved_placeholder => unreachable,
         },
 
         .var_args_param_type => unreachable,
@@ -8250,6 +8279,7 @@ pub fn zigTypeTagOrPoison(ip: *const InternPool, index: Index) error{GenericPois
             .repeated,
             // memoization, not types
             .memoized_call,
+            .unique_unresolved_placeholder,
             => unreachable,
         },
         .none => unreachable, // special tag
@@ -8415,17 +8445,16 @@ pub fn resolveBuiltinType(ip: *InternPool, want_index: Index, resolved_index: In
     const item = ip.items.get(@intFromEnum(resolved_index));
     ip.items.set(@intFromEnum(want_index), item);
 
-    if (std.debug.runtime_safety) {
-        // Make the value unreachable - this is a weird value which will make (incorrect) existing
-        // references easier to spot
-        ip.items.set(@intFromEnum(resolved_index), .{
-            .tag = .simple_value,
-            .data = @intFromEnum(SimpleValue.@"unreachable"),
-        });
-    } else {
-        // Here we could add the index to a free-list for reuse, but since
-        // there is so little garbage created this way it's not worth it.
-    }
+    // Make the value unreachable - this is a weird value which will make (incorrect) existing
+    // references easier to spot
+
+    // Here we could add the index to a free-list for reuse, but since
+    // there is so little garbage created this way it's not worth it.
+
+    ip.items.set(@intFromEnum(resolved_index), .{
+        .tag = .unique_unresolved_placeholder,
+        .data = @intCast(ip.items.len),
+    });
 }
 
 pub fn anonStructFieldTypes(ip: *const InternPool, i: Index) []const Index {

@@ -8,7 +8,7 @@ const assert = std.debug.assert;
 
 const main = @import("main.zig");
 const fatal = main.fatal;
-const Server = std.zig.Server;
+const Server = std.zig.protocol.Server;
 const build_options = @import("build_options");
 
 pub fn cmdObjCopy(
