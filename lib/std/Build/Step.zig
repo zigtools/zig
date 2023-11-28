@@ -266,6 +266,7 @@ const Build = std.Build;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const builtin = @import("builtin");
+const CompilerProtocol = std.zig.protocol.Compiler;
 
 pub fn evalChildProcess(s: *Step, argv: []const []const u8) !void {
     const arena = s.owner.allocator;
@@ -332,7 +333,7 @@ pub fn evalZigProcess(
     try sendMessage(child.stdin.?, .update);
     try sendMessage(child.stdin.?, .exit);
 
-    const Header = std.zig.Server.Message.Header;
+    const Header = CompilerProtocol.ServerToClient.Header;
     var result: ?[]const u8 = null;
 
     var node_name: std.ArrayListUnmanaged(u8) = .{};
@@ -362,7 +363,7 @@ pub fn evalZigProcess(
                 }
             },
             .error_bundle => {
-                const EbHdr = std.zig.Server.Message.ErrorBundle;
+                const EbHdr = CompilerProtocol.ServerToClient.ErrorBundle;
                 const eb_hdr = @as(*align(1) const EbHdr, @ptrCast(body));
                 const extra_bytes =
                     body[@sizeOf(EbHdr)..][0 .. @sizeOf(u32) * eb_hdr.extra_len];
@@ -383,7 +384,7 @@ pub fn evalZigProcess(
                 sub_prog_node.setName(node_name.items);
             },
             .emit_bin_path => {
-                const EbpHdr = std.zig.Server.Message.EmitBinPath;
+                const EbpHdr = CompilerProtocol.ServerToClient.EmitBinPath;
                 const ebp_hdr = @as(*align(1) const EbpHdr, @ptrCast(body));
                 s.result_cached = ebp_hdr.flags.cache_hit;
                 result = try arena.dupe(u8, body[@sizeOf(EbpHdr)..]);
@@ -433,8 +434,8 @@ pub fn evalZigProcess(
     return result;
 }
 
-fn sendMessage(file: std.fs.File, tag: std.zig.Client.Message.Tag) !void {
-    const header: std.zig.Client.Message.Header = .{
+fn sendMessage(file: std.fs.File, tag: CompilerProtocol.ClientToServer.Tag) !void {
+    const header: CompilerProtocol.ClientToServer.Header = .{
         .tag = tag,
         .bytes_len = 0,
     };

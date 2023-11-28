@@ -2,6 +2,7 @@
 const std = @import("std");
 const io = std.io;
 const builtin = @import("builtin");
+const CompilerProtocol = std.zig.protocol.Compiler;
 
 pub const std_options = struct {
     pub const io_mode: io.Mode = builtin.test_io_mode;
@@ -38,7 +39,7 @@ pub fn main() void {
 }
 
 fn mainServer() !void {
-    var server = try std.zig.Server.init(.{
+    var server = try CompilerProtocol.Server.init(.{
         .gpa = fba.allocator(),
         .in = std.io.getStdIn(),
         .out = std.io.getStdOut(),
@@ -115,7 +116,7 @@ fn mainServer() !void {
                         .skip = skip,
                         .leak = leak,
                         .log_err_count = std.math.lossyCast(std.meta.FieldType(
-                            std.zig.Server.Message.TestResults.Flags,
+                            CompilerProtocol.ServerToClient.TestResults.Flags,
                             .log_err_count,
                         ), log_err_count),
                     },

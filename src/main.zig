@@ -28,7 +28,7 @@ const crash_report = @import("crash_report.zig");
 const Module = @import("Module.zig");
 const AstGen = @import("AstGen.zig");
 const mingw = @import("mingw.zig");
-const Server = std.zig.Server;
+const Server = std.zig.protocol.Compiler.Server;
 
 pub const std_options = struct {
     pub const wasiCwd = wasi_cwd;

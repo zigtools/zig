@@ -8,6 +8,7 @@ const process = std.process;
 const ArrayList = std.ArrayList;
 const EnvMap = process.EnvMap;
 const assert = std.debug.assert;
+const CompilerProtocol = std.zig.protocol.Compiler;
 
 const Run = @This();
 
@@ -1043,7 +1044,7 @@ fn evalZigTest(
 
     try sendMessage(child.stdin.?, .query_test_metadata);
 
-    const Header = std.zig.Server.Message.Header;
+    const Header = CompilerProtocol.ServerToClient.Header;
 
     const stdout = poller.fifo(.stdout);
     const stderr = poller.fifo(.stderr);
@@ -1079,7 +1080,7 @@ fn evalZigTest(
                 }
             },
             .test_metadata => {
-                const TmHdr = std.zig.Server.Message.TestMetadata;
+                const TmHdr = CompilerProtocol.ServerToClient.TestMetadata;
                 const tm_hdr = @as(*align(1) const TmHdr, @ptrCast(body));
                 test_count = tm_hdr.tests_len;
 
@@ -1115,7 +1116,7 @@ fn evalZigTest(
             .test_results => {
                 const md = metadata.?;
 
-                const TrHdr = std.zig.Server.Message.TestResults;
+                const TrHdr = CompilerProtocol.ServerToClient.TestResults;
                 const tr_hdr = @as(*align(1) const TrHdr, @ptrCast(body));
                 fail_count +|= @intFromBool(tr_hdr.flags.fail);
                 skip_count +|= @intFromBool(tr_hdr.flags.skip);
@@ -1204,8 +1205,8 @@ fn requestNextTest(in: fs.File, metadata: *TestMetadata, sub_prog_node: *?std.Pr
     }
 }
 
-fn sendMessage(file: std.fs.File, tag: std.zig.Client.Message.Tag) !void {
-    const header: std.zig.Client.Message.Header = .{
+fn sendMessage(file: std.fs.File, tag: CompilerProtocol.ClientToServer.Tag) !void {
+    const header: CompilerProtocol.ClientToServer.Header = .{
         .tag = tag,
         .bytes_len = 0,
     };
@@ -1213,7 +1214,7 @@ fn sendMessage(file: std.fs.File, tag: std.zig.Client.Message.Tag) !void {
 }
 
 fn sendRunTestMessage(file: std.fs.File, index: u32) !void {
-    const header: std.zig.Client.Message.Header = .{
+    const header: CompilerProtocol.ClientToServer.Header = .{
         .tag = .run_test,
         .bytes_len = 4,
     };
