@@ -19,47 +19,10 @@ const NativeTargetInfo = std.zig.system.NativeTargetInfo;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const Build = @This();
 
+pub const Step = @import("Build/configure/Step.zig");
 pub const Cache = @import("Build/Cache.zig");
 
-/// deprecated: use `Step.Compile`.
-pub const LibExeObjStep = Step.Compile;
-/// deprecated: use `Build`.
-pub const Builder = Build;
-/// deprecated: use `Step.InstallDir.Options`
-pub const InstallDirectoryOptions = Step.InstallDir.Options;
-
-pub const Step = @import("Build/Step.zig");
-/// deprecated: use `Step.CheckFile`.
-pub const CheckFileStep = @import("Build/Step/CheckFile.zig");
-/// deprecated: use `Step.CheckObject`.
-pub const CheckObjectStep = @import("Build/Step/CheckObject.zig");
-/// deprecated: use `Step.ConfigHeader`.
-pub const ConfigHeaderStep = @import("Build/Step/ConfigHeader.zig");
-/// deprecated: use `Step.Fmt`.
-pub const FmtStep = @import("Build/Step/Fmt.zig");
-/// deprecated: use `Step.InstallArtifact`.
-pub const InstallArtifactStep = @import("Build/Step/InstallArtifact.zig");
-/// deprecated: use `Step.InstallDir`.
-pub const InstallDirStep = @import("Build/Step/InstallDir.zig");
-/// deprecated: use `Step.InstallFile`.
-pub const InstallFileStep = @import("Build/Step/InstallFile.zig");
-/// deprecated: use `Step.ObjCopy`.
-pub const ObjCopyStep = @import("Build/Step/ObjCopy.zig");
-/// deprecated: use `Step.Compile`.
-pub const CompileStep = @import("Build/Step/Compile.zig");
-/// deprecated: use `Step.Options`.
-pub const OptionsStep = @import("Build/Step/Options.zig");
-/// deprecated: use `Step.RemoveDir`.
-pub const RemoveDirStep = @import("Build/Step/RemoveDir.zig");
-/// deprecated: use `Step.Run`.
-pub const RunStep = @import("Build/Step/Run.zig");
-/// deprecated: use `Step.TranslateC`.
-pub const TranslateCStep = @import("Build/Step/TranslateC.zig");
-/// deprecated: use `Step.WriteFile`.
-pub const WriteFileStep = @import("Build/Step/WriteFile.zig");
-/// deprecated: use `LazyPath`.
-pub const FileSource = LazyPath;
-
+next_step_id: *u32,
 install_tls: TopLevelStep,
 uninstall_tls: TopLevelStep,
 allocator: Allocator,
@@ -137,7 +100,7 @@ available_deps: AvailableDeps,
 
 const AvailableDeps = []const struct { []const u8, []const u8 };
 
-const InitializedDepMap = std.HashMap(InitializedDepKey, *Dependency, InitializedDepContext, std.hash_map.default_max_load_percentage);
+const InitializedDepMap = std.ArrayHashMap(InitializedDepKey, *Dependency, InitializedDepContext, false);
 const InitializedDepKey = struct {
     build_root_string: []const u8,
     user_input_options: UserInputOptionsMap,
@@ -153,8 +116,10 @@ const InitializedDepContext = struct {
         return hasher.final();
     }
 
-    pub fn eql(self: @This(), lhs: InitializedDepKey, rhs: InitializedDepKey) bool {
+    pub fn eql(self: @This(), lhs: InitializedDepKey, rhs: InitializedDepKey, index: usize) bool {
         _ = self;
+        _ = index;
+
         if (!std.mem.eql(u8, lhs.build_root_string, rhs.build_root_string))
             return false;
 
@@ -262,6 +227,7 @@ pub fn create(
 
     const self = try allocator.create(Build);
     self.* = .{
+        .next_step_id = try allocator.create(u32),
         .zig_exe = zig_exe,
         .build_root = build_root,
         .cache_root = cache_root,
@@ -292,7 +258,8 @@ pub fn create(
         .installed_files = ArrayList(InstalledFile).init(allocator),
         .install_tls = .{
             .step = Step.init(.{
-                .id = .top_level,
+                .id = @enumFromInt(0),
+                .kind = .top_level,
                 .name = "install",
                 .owner = self,
             }),
@@ -300,10 +267,10 @@ pub fn create(
         },
         .uninstall_tls = .{
             .step = Step.init(.{
-                .id = .top_level,
+                .id = @enumFromInt(1),
+                .kind = .top_level,
                 .name = "uninstall",
                 .owner = self,
-                .makeFn = makeUninstall,
             }),
             .description = "Remove build artifacts from prefix path",
         },
@@ -315,10 +282,16 @@ pub fn create(
         .initialized_deps = initialized_deps,
         .available_deps = available_deps,
     };
+    self.next_step_id.* = @enumFromInt(2);
     try self.top_level_steps.put(allocator, self.install_tls.step.name, &self.install_tls);
     try self.top_level_steps.put(allocator, self.uninstall_tls.step.name, &self.uninstall_tls);
     self.default_step = &self.install_tls.step;
     return self;
+}
+
+pub fn nextStepId(b: *Build) Step.Id {
+    defer b.next_step_id.* += 1;
+    return b.next_step_id;
 }
 
 fn createChild(
@@ -337,6 +310,7 @@ fn createChildOnly(parent: *Build, dep_name: []const u8, build_root: Cache.Direc
     const allocator = parent.allocator;
     const child = try allocator.create(Build);
     child.* = .{
+        .next_step_id = parent.next_step_id,
         .allocator = allocator,
         .install_tls = .{
             .step = Step.init(.{
@@ -1480,7 +1454,7 @@ pub fn installFile(self: *Build, src_path: []const u8, dest_rel_path: []const u8
     self.getInstallStep().dependOn(&self.addInstallFileWithDir(.{ .path = src_path }, .prefix, dest_rel_path).step);
 }
 
-pub fn installDirectory(self: *Build, options: InstallDirectoryOptions) void {
+pub fn installDirectory(self: *Build, options: Step.InstallDir.Options) void {
     self.getInstallStep().dependOn(&self.addInstallDirectory(options).step);
 }
 
@@ -1526,7 +1500,7 @@ pub fn addInstallFileWithDir(
     return Step.InstallFile.create(self, source.dupe(self), install_dir, dest_rel_path);
 }
 
-pub fn addInstallDirectory(self: *Build, options: InstallDirectoryOptions) *Step.InstallDir {
+pub fn addInstallDirectory(self: *Build, options: Step.InstallDir.Options) *Step.InstallDir {
     return Step.InstallDir.create(self, options);
 }
 
@@ -1999,6 +1973,18 @@ pub const LazyPath = union(enum) {
             .generated => |gen| .{ .generated = gen },
             .dependency => |dep| .{ .dependency = dep },
         };
+    }
+
+    pub fn serialize(self: LazyPath, buffer: *std.ArrayList(u8)) !void {
+        // const LazyPathTag = std.meta.Tag();
+
+        try buffer.ensureUnusedCapacity(1 + switch (self) {
+            .path => |p| p.len,
+            .cwd_relative => |p| p.len,
+            .generated => @sizeOf(Step.Id),
+            .dependency => |dep| dep.dependency.builder.initialized_deps.getIndex(dep).?,
+        });
+        try buffer.append(@intFromEnum(std.meta.activeTag()));
     }
 };
 

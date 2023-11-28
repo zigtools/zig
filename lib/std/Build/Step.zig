@@ -75,7 +75,7 @@ pub const State = enum {
     skipped_oom,
 };
 
-pub const Id = enum {
+pub const Kind = enum(u32) {
     top_level,
     compile,
     install_artifact,
@@ -91,10 +91,11 @@ pub const Id = enum {
     config_header,
     objcopy,
     options,
-    custom,
 
-    pub fn Type(comptime id: Id) type {
-        return switch (id) {
+    _,
+
+    pub fn Type(comptime kind: Kind) type {
+        return switch (kind) {
             .top_level => Build.TopLevelStep,
             .compile => Compile,
             .install_artifact => InstallArtifact,
