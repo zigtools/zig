@@ -1,3 +1,5 @@
+const Id = @import("configure/Step.zig").Id;
+
 id: Id,
 name: []const u8,
 owner: *Build,
@@ -325,68 +327,34 @@ pub fn evalZigProcess(
     });
     var timer = try std.time.Timer.start();
 
-    var poller = std.io.poll(gpa, enum { stdout, stderr }, .{
-        .stdout = child.stdout.?,
-        .stderr = child.stderr.?,
-    });
-    defer poller.deinit();
+    var buffered_reader = std.io.bufferedReader(std.io.getStdIn().reader());
+    var buffered_writer = std.io.bufferedWriter(std.io.getStdOut().writer());
 
-    try sendMessage(child.stdin.?, .update);
-    try sendMessage(child.stdin.?, .exit);
+    var client = CompilerProtocol.Client(@TypeOf(buffered_reader.reader()), @TypeOf(buffered_writer.writer())){
+        .reader = buffered_reader.reader(),
+        .writer = buffered_writer.writer(),
+        .allocator = arena,
+    };
+    try client.handshake();
 
-    const Header = CompilerProtocol.ServerToClient.Header;
     var result: ?[]const u8 = null;
 
-    var node_name: std.ArrayListUnmanaged(u8) = .{};
-    defer node_name.deinit(gpa);
+    var node_name = std.ArrayList(u8).init(arena);
+    defer node_name.deinit();
     var sub_prog_node = prog_node.start("", 0);
     defer sub_prog_node.end();
 
-    const stdout = poller.fifo(.stdout);
-
-    poll: while (true) {
-        while (stdout.readableLength() < @sizeOf(Header)) {
-            if (!(try poller.poll())) break :poll;
-        }
-        const header = stdout.reader().readStruct(Header) catch unreachable;
-        while (stdout.readableLength() < header.bytes_len) {
-            if (!(try poller.poll())) break :poll;
-        }
-        const body = stdout.readableSliceOfLen(header.bytes_len);
-
-        switch (header.tag) {
-            .zig_version => {
-                if (!std.mem.eql(u8, builtin.zig_version_string, body)) {
-                    return s.fail(
-                        "zig version mismatch build runner vs compiler: '{s}' vs '{s}'",
-                        .{ builtin.zig_version_string, body },
-                    );
-                }
-            },
+    while (true) {
+        switch (try client.readTag()) {
             .error_bundle => {
-                const EbHdr = CompilerProtocol.ServerToClient.ErrorBundle;
-                const eb_hdr = @as(*align(1) const EbHdr, @ptrCast(body));
-                const extra_bytes =
-                    body[@sizeOf(EbHdr)..][0 .. @sizeOf(u32) * eb_hdr.extra_len];
-                const string_bytes =
-                    body[@sizeOf(EbHdr) + extra_bytes.len ..][0..eb_hdr.string_bytes_len];
-                // TODO: use @ptrCast when the compiler supports it
-                const unaligned_extra = std.mem.bytesAsSlice(u32, extra_bytes);
-                const extra_array = try arena.alloc(u32, unaligned_extra.len);
-                @memcpy(extra_array, unaligned_extra);
-                s.result_error_bundle = .{
-                    .string_bytes = try arena.dupe(u8, string_bytes),
-                    .extra = extra_array,
-                };
+                s.result_error_bundle = try client.readErrorBundle(arena);
             },
             .progress => {
-                node_name.clearRetainingCapacity();
-                try node_name.appendSlice(gpa, body);
+                try client.readStringArrayList(&node_name);
                 sub_prog_node.setName(node_name.items);
             },
             .emit_bin_path => {
-                const EbpHdr = CompilerProtocol.ServerToClient.EmitBinPath;
-                const ebp_hdr = @as(*align(1) const EbpHdr, @ptrCast(body));
+                const ebp = try client.readEmitBinPath(path_buf: *std.ArrayList(u8))
                 s.result_cached = ebp_hdr.flags.cache_hit;
                 result = try arena.dupe(u8, body[@sizeOf(EbpHdr)..]);
             },

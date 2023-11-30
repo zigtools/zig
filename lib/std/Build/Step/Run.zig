@@ -1036,18 +1036,14 @@ fn evalZigTest(
     const gpa = self.step.owner.allocator;
     const arena = self.step.owner.allocator;
 
-    var poller = std.io.poll(gpa, enum { stdout, stderr }, .{
-        .stdout = child.stdout.?,
-        .stderr = child.stderr.?,
-    });
-    defer poller.deinit();
+    var buffered_reader = std.io.bufferedReader(std.io.getStdIn().reader());
+    var buffered_writer = std.io.bufferedWriter(std.io.getStdOut().writer());
 
-    try sendMessage(child.stdin.?, .query_test_metadata);
-
-    const Header = CompilerProtocol.ServerToClient.Header;
-
-    const stdout = poller.fifo(.stdout);
-    const stderr = poller.fifo(.stderr);
+    var client = CompilerProtocol.Client(@TypeOf(buffered_reader.reader()), @TypeOf(buffered_writer.writer())){
+        .reader = buffered_reader.reader(),
+        .writer = buffered_writer.writer(),
+    };
+    try client.handshake();
 
     var fail_count: u32 = 0;
     var skip_count: u32 = 0;
@@ -1060,25 +1056,8 @@ fn evalZigTest(
     var sub_prog_node: ?std.Progress.Node = null;
     defer if (sub_prog_node) |*n| n.end();
 
-    poll: while (true) {
-        while (stdout.readableLength() < @sizeOf(Header)) {
-            if (!(try poller.poll())) break :poll;
-        }
-        const header = stdout.reader().readStruct(Header) catch unreachable;
-        while (stdout.readableLength() < header.bytes_len) {
-            if (!(try poller.poll())) break :poll;
-        }
-        const body = stdout.readableSliceOfLen(header.bytes_len);
-
-        switch (header.tag) {
-            .zig_version => {
-                if (!std.mem.eql(u8, builtin.zig_version_string, body)) {
-                    return self.step.fail(
-                        "zig version mismatch build runner vs compiler: '{s}' vs '{s}'",
-                        .{ builtin.zig_version_string, body },
-                    );
-                }
-            },
+    while (true) {
+        switch (try client.readTag()) {
             .test_metadata => {
                 const TmHdr = CompilerProtocol.ServerToClient.TestMetadata;
                 const tm_hdr = @as(*align(1) const TmHdr, @ptrCast(body));

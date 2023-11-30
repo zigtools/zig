@@ -1976,15 +1976,19 @@ pub const LazyPath = union(enum) {
     }
 
     pub fn serialize(self: LazyPath, buffer: *std.ArrayList(u8)) !void {
-        // const LazyPathTag = std.meta.Tag();
-
         try buffer.ensureUnusedCapacity(1 + switch (self) {
             .path => |p| p.len,
             .cwd_relative => |p| p.len,
             .generated => @sizeOf(Step.Id),
-            .dependency => |dep| dep.dependency.builder.initialized_deps.getIndex(dep).?,
+            .dependency => @sizeOf(u64),
         });
         try buffer.append(@intFromEnum(std.meta.activeTag()));
+        switch (self) {
+            .path => |p| p,
+            .cwd_relative => |p| p,
+            .generated => |gen| gen.step.id,
+            .dependency => |dep| dep.dependency.builder.initialized_deps.getIndex(dep).?,
+        }
     }
 };
 

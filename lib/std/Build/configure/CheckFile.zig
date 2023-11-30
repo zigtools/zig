@@ -55,14 +55,18 @@ pub const Header = extern struct {
 pub fn serialize(step: *Step, buffer: *std.ArrayList(u8)) !void {
     const self = @fieldParentPtr(CheckFile, "step", step);
 
-    try buffer.ensureUnusedCapacity(@sizeOf(Header) + step.name.len + step.dependencies.items.len * @sizeOf(Id));
+    try buffer.ensureUnusedCapacity(@sizeOf(Header) + self.name.len + self.dependencies.items.len * @sizeOf(Step.Id));
     try buffer.appendSliceAssumeCapacity(std.mem.asBytes(&Header{
-        .id = step.id,
-        .kind = step.kind,
-        .name_len = step.name.len,
-        .dependencies_len = step.dependencies.items.len,
-        .max_rss = step.max_rss,
+        .id = self.id,
+        .kind = self.kind,
+        .name_len = self.name.len,
+        .dependencies_len = self.dependencies.items.len,
+        .max_rss = self.max_rss,
     }));
-    try buffer.appendSliceAssumeCapacity(step.name);
-    try buffer.appendSliceAssumeCapacity(std.mem.asBytes(step.dependencies.items));
+    try buffer.appendSliceAssumeCapacity(self.name);
+    try buffer.appendSliceAssumeCapacity(std.mem.asBytes(self.dependencies.items));
+}
+
+pub fn deserialize(step: *Step) !void {
+    _ = step;
 }

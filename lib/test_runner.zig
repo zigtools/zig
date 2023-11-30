@@ -39,17 +39,17 @@ pub fn main() void {
 }
 
 fn mainServer() !void {
-    var server = try CompilerProtocol.Server.init(.{
-        .gpa = fba.allocator(),
-        .in = std.io.getStdIn(),
-        .out = std.io.getStdOut(),
-        .zig_version = builtin.zig_version_string,
-    });
-    defer server.deinit();
+    var buffered_reader = std.io.bufferedReader(std.io.getStdIn().reader());
+    var buffered_writer = std.io.bufferedWriter(std.io.getStdOut().writer());
+
+    var server = CompilerProtocol.Server(@TypeOf(buffered_reader.reader()), @TypeOf(buffered_writer.writer())){
+        .reader = buffered_reader.reader(),
+        .writer = buffered_writer.writer(),
+    };
 
     while (true) {
-        const hdr = try server.receiveMessage();
-        switch (hdr.tag) {
+        const tag = try server.readTag();
+        switch (tag) {
             .exit => {
                 return std.process.exit(0);
             },
@@ -124,7 +124,7 @@ fn mainServer() !void {
             },
 
             else => {
-                std.debug.print("unsupported message: {x}", .{@intFromEnum(hdr.tag)});
+                std.debug.print("unsupported message: {x}", .{@intFromEnum(tag)});
                 std.process.exit(1);
             },
         }
