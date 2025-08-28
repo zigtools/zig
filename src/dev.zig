@@ -197,12 +197,14 @@ pub const Env = enum {
                 else => Env.sema.supports(feature),
             },
             .wasm => switch (feature) {
-                .stdio_listen,
-                .incremental,
                 .wasm_backend,
                 .wasm_linker,
+                .build_exe_command,
+                .sema,
+                .ast_gen,
+                .legalize,
                 => true,
-                else => Env.sema.supports(feature),
+                else => false,
             },
             .@"x86_64-linux" => switch (feature) {
                 .build_command,
